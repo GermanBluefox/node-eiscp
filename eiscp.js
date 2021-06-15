@@ -398,9 +398,13 @@ self.connect = function (options) {
 
 self.close = self.disconnect = function () {
 
-    if (self.is_connected) {
+    //if (self.is_connected) {
+    try {
         eiscp.destroy();
+    } catch (err) {
+	// ignore
     }
+    //}
 };
 
 send_queue = async.queue(function (data, callback) {

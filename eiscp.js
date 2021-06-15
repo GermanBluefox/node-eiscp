@@ -236,7 +236,11 @@ self.discover = function () {
     client
 	.on('error', function (err) {
         self.emit('error', util.format("ERROR (server_error) Server error on %s:%s - %s", options.address, options.port, err));
-        client.close();
+        try {
+	    client.close();
+	} catch (err) {
+	    // ignore
+	}
         callback(err, null);
     })
 	.on('message', function (packet, rinfo) {

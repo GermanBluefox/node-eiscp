@@ -3,7 +3,7 @@
 /*
     Script that converts eiscp-commands.yaml to eiscp-commands.json
 */
-require('js-yaml');
+var yaml = require('js-yaml');
 
 var fs = require('fs'),
     command_mappings = {},
@@ -18,8 +18,7 @@ var fs = require('fs'),
     result = { 'commands': {} };
 
 try {
-
-    doc = require('./eiscp-commands.yaml');
+    doc = yaml.load(fs.readFileSync('./eiscp-commands.yaml', 'utf8'));
     result.modelsets = doc.modelsets;
     delete doc.modelsets;
 
@@ -76,7 +75,7 @@ try {
     result.command_mappings = command_mappings;
     result.value_mappings = value_mappings;
 
-    fs.writeFile('eiscp-commands.json', JSON.stringify(result), function (err) {
+    fs.writeFile('eiscp-commands.json', JSON.stringify(result, null, 2), function (err) {
         if (err) { return console.log(err); }
 
         console.log('eiscp-commands.json created!');

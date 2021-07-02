@@ -16,6 +16,7 @@ var self, eiscp, send_queue,
 module.exports = self = new events.EventEmitter();
 
 self.is_connected = false;
+self.unhandled_data = null;
 
 function in_modelsets(set) {
     // returns true if set is in modelsets false otherwise
@@ -54,7 +55,45 @@ function eiscp_packet_extract(packet) {
       Exracts message from eISCP packet
       Strip first 18 bytes and last 3 since that's only the header and end characters
     */
-    return packet.toString('ascii', 18, packet.length - 3);
+    self.emit('debug','Handle packet: ' + packet.toString('utf-8'));
+    if (self.unhandled_data) {
+        self.emit('debug', 'Add ' + self.unhandled_data.length + ' bytes from unhandled data');
+        packet = Buffer.concat([self.unhandled_data, packet]);
+        self.unhandled_data = null;
+    }
+
+    let offset = packet.indexOf('ISCP', 0, 'ascii');
+    if (offset === -1) { // No data packet included ...
+        self.emit('debug', 'No magic included in packet ... store as unhandled ... ' + packet.length + ' bytes now');
+        self.unhandled_data = packet;
+        return [];
+    }
+    if (offset > 0) { // Data packet do not start at index 0 ... discard data
+        self.emit('debug', 'Discard ' + offset + ' bytes because Header missing: ' + packet.toString('hex', 0, offset));
+    }
+
+    const packets = [];
+
+    while (true) {
+        if (offset === packet.length) {
+            break;
+        }
+        const headerLength = packet.readUInt32BE(offset + 4);
+        const packetLength = packet.readUInt32BE(offset + 8);
+        self.emit('debug', 'Packet detected: Handle offset=' + offset + '/' + packet.length + ', magic=' + packet.toString('utf-8', offset, offset + 4) + ', headerLength=' + headerLength + ', packetLength=' + packetLength + ', endOffset=' + (offset + headerLength + packetLength));
+        if (headerLength === 0) {
+            break;
+        }
+        if (packet.length < offset + headerLength + packetLength) {
+            self.unhandled_data = Buffer.alloc(packet.length - offset);
+            packet.copy(self.unhandled_data, 0, offset);
+            self.emit('debug', 'Incomplete packet detected, store ' + (packet.length - offset) + ' bytes for later (' + self.unhandled_data.length + '): ' + self.unhandled_data.toString('utf-8'));
+            break;
+        }
+        packets.push(packet.toString('ascii', offset + headerLength + 2, offset + headerLength + packetLength - 3));
+        offset += headerLength + packetLength;
+    }
+    return packets;
 }
 
 function iscp_to_command(iscp_message) {
@@ -244,34 +283,36 @@ self.discover = function () {
         callback(err, null);
     })
 	.on('message', function (packet, rinfo) {
-        var message = eiscp_packet_extract(packet),
-            command = message.slice(0, 3),
-            data;
-        if (command === 'ECN') {
-            data = message.slice(3).split('/');
-            result.push({
-                host:     rinfo.address,
-                port:     data[1],
-                model:    data[0],
-                mac:      data[3].slice(0, 12), // There's lots of null chars after MAC so we slice them off
-                areacode: data[2]
-            });
-            self.emit('debug', util.format("DEBUG (received_discovery) Received discovery packet from %s:%s (%j)", rinfo.address, rinfo.port, result));
-            if (result.length >= options.devices) {
-                clearTimeout(timeout_timer);
-                close();
+	    var messages = eiscp_packet_extract(packet);
+	    messages.forEach(message => {
+            var command = message.slice(0, 3),
+                data;
+            if (command === 'ECN') {
+                data = message.slice(3).split('/');
+                result.push({
+                    host:     rinfo.address,
+                    port:     data[1],
+                    model:    data[0],
+                    mac:      data[3].slice(0, 12), // There's lots of null chars after MAC so we slice them off
+                    areacode: data[2]
+                });
+                self.emit('debug', util.format("DEBUG (received_discovery) Received discovery packet from %s:%s (%j)", rinfo.address, rinfo.port, result));
+                if (result.length >= options.devices) {
+                    clearTimeout(timeout_timer);
+                    close();
+                }
+            } else {
+                self.emit('debug', util.format("DEBUG (received_data) Received data from %s:%s - %j", rinfo.address, rinfo.port, message));
             }
-        } else {
-            self.emit('debug', util.format("DEBUG (received_data) Recevied data from %s:%s - %j", rinfo.address, rinfo.port, message));
-        }
+        });
     })
 	.on('listening', function () {
         client.setBroadcast(true);
         var onkyo_buffer = eiscp_packet('!xECNQSTN');
-	var pioneer_buffer = eiscp_packet('!pECNQSTN');
+	    var pioneer_buffer = eiscp_packet('!pECNQSTN');
         self.emit('debug', util.format("DEBUG (sent_discovery) Sent broadcast discovery packet to %s:%s", options.address, options.port));
         client.send(onkyo_buffer, 0, onkyo_buffer.length, options.port, options.address);
-	client.send(pioneer_buffer, 0, pioneer_buffer.length, options.port, options.address);
+	    client.send(pioneer_buffer, 0, pioneer_buffer.length, options.port, options.address);
         timeout_timer = setTimeout(close, options.timeout * 1000);
     })
     .bind(0);
@@ -350,7 +391,6 @@ self.connect = function (options) {
 
 	eiscp.
 	on('connect', function () {
-
 		self.is_connected = true;
 		self.emit('debug', util.format("INFO (connected) Connected to %s:%s (model: %s)", config.host, config.port, config.model));
 		self.emit('connect', config.host, config.port, config.model);
@@ -375,28 +415,31 @@ self.connect = function (options) {
 	}).
 
 	on('data', function (data) {
+	    self.emit('raw', data);
 
-		var iscp_message = eiscp_packet_extract(data),
-			result = iscp_to_command(iscp_message);
+        var messages = eiscp_packet_extract(data);
+        messages.forEach(iscp_message => {
+            var result = iscp_to_command(iscp_message);
 
-		result.iscp_command = iscp_message;
-        result.host  = config.host;
-        result.port  = config.port;
-        result.model = config.model;
+            result.iscp_command = iscp_message;
+            result.host  = config.host;
+            result.port  = config.port;
+            result.model = config.model;
 
-		self.emit('debug', util.format("DEBUG (received_data) Received data from %s:%s - %j", config.host, config.port, result));
-		self.emit('data', result);
+            self.emit('debug', util.format("DEBUG (received_data) Received data from %s:%s - %j", config.host, config.port, result));
+            self.emit('data', result);
 
-		// If the command is supported we emit it as well
-		if (typeof result.command !== 'undefined') {
-			if (Array.isArray(result.command)) {
-				result.command.forEach(function (cmd) {
-					self.emit(cmd, result.argument);
-				});
-			} else {
-				self.emit(result.command, result.argument);
-			}
-		}
+            // If the command is supported we emit it as well
+            if (typeof result.command !== 'undefined') {
+                if (Array.isArray(result.command)) {
+                    result.command.forEach(function (cmd) {
+                        self.emit(cmd, result.argument);
+                    });
+                } else {
+                    self.emit(result.command, result.argument);
+                }
+            }
+        });
 	});
 };
 

@@ -55,21 +55,21 @@ function eiscp_packet_extract(packet) {
       Exracts message from eISCP packet
       Strip first 18 bytes and last 3 since that's only the header and end characters
     */
-    self.emit('debug','Handle packet: ' + packet.toString('utf-8'));
+    self.emit('debug','DEBUG (packet_extract) Handle packet: ' + packet.toString('utf-8'));
     if (self.unhandled_data) {
-        self.emit('debug', 'Add ' + self.unhandled_data.length + ' bytes from unhandled data');
+        self.emit('debug', 'DEBUG (packet_extract) Add ' + self.unhandled_data.length + ' bytes from unhandled data');
         packet = Buffer.concat([self.unhandled_data, packet]);
         self.unhandled_data = null;
     }
 
     let offset = packet.indexOf('ISCP', 0, 'ascii');
     if (offset === -1) { // No data packet included ...
-        self.emit('debug', 'No magic included in packet ... store as unhandled ... ' + packet.length + ' bytes now');
+        self.emit('debug', 'DEBUG (packet_extract) No magic included in packet ... store as unhandled data ... ' + packet.length + ' bytes now');
         self.unhandled_data = packet;
         return [];
     }
     if (offset > 0) { // Data packet do not start at index 0 ... discard data
-        self.emit('debug', 'Discard ' + offset + ' bytes because Header missing: ' + packet.toString('hex', 0, offset));
+        self.emit('debug', 'DEBUG (packet_extract) Discard ' + offset + ' bytes because Header missing: ' + packet.toString('hex', 0, offset));
     }
 
     const packets = [];
@@ -80,14 +80,14 @@ function eiscp_packet_extract(packet) {
         }
         const headerLength = packet.readUInt32BE(offset + 4);
         const packetLength = packet.readUInt32BE(offset + 8);
-        self.emit('debug', 'Packet detected: Handle offset=' + offset + '/' + packet.length + ', magic=' + packet.toString('utf-8', offset, offset + 4) + ', headerLength=' + headerLength + ', packetLength=' + packetLength + ', endOffset=' + (offset + headerLength + packetLength));
+        self.emit('debug', 'DEBUG (packet_extract) Packet detected: Handle offset=' + offset + '/' + packet.length + ', magic=' + packet.toString('utf-8', offset, offset + 4) + ', headerLength=' + headerLength + ', packetLength=' + packetLength + ', endOffset=' + (offset + headerLength + packetLength));
         if (headerLength === 0) {
             break;
         }
         if (packet.length < offset + headerLength + packetLength) {
             self.unhandled_data = Buffer.alloc(packet.length - offset);
             packet.copy(self.unhandled_data, 0, offset);
-            self.emit('debug', 'Incomplete packet detected, store ' + (packet.length - offset) + ' bytes for later (' + self.unhandled_data.length + '): ' + self.unhandled_data.toString('utf-8'));
+            self.emit('debug', 'DEBUG (packet_extract) Incomplete packet detected, store ' + (packet.length - offset) + ' bytes as unhandled data for later (' + self.unhandled_data.length + '): ' + self.unhandled_data.toString('utf-8'));
             break;
         }
         packets.push(packet.toString('ascii', offset + headerLength + 2, offset + headerLength + packetLength - 3));

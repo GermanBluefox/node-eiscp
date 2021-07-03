@@ -78,13 +78,19 @@ function eiscp_packet_extract(packet) {
         if (offset === packet.length) {
             break;
         }
-        const headerLength = packet.readUInt32BE(offset + 4);
-        const packetLength = packet.readUInt32BE(offset + 8);
-        self.emit('debug', 'DEBUG (packet_extract) Packet detected: Handle offset=' + offset + '/' + packet.length + ', magic=' + packet.toString('utf-8', offset, offset + 4) + ', headerLength=' + headerLength + ', packetLength=' + packetLength + ', endOffset=' + (offset + headerLength + packetLength));
-        if (headerLength === 0) {
-            break;
+        let headerLength = null
+        let packetLength = null;
+        try {
+            headerLength = packet.readUInt32BE(offset + 4);
+            packetLength = packet.readUInt32BE(offset + 8);
+            self.emit('debug', 'DEBUG (packet_extract) Packet detected: Handle offset=' + offset + '/' + packet.length + ', magic=' + packet.toString('utf-8', offset, offset + 4) + ', headerLength=' + headerLength + ', packetLength=' + packetLength + ', endOffset=' + (offset + headerLength + packetLength));
+            if (headerLength === 0) {
+                break;
+            }
+        } catch {
+            // ignore
         }
-        if (packet.length < offset + headerLength + packetLength) {
+        if (headerLength === null || packetLength === null || packet.length < offset + headerLength + packetLength) {
             self.unhandled_data = Buffer.alloc(packet.length - offset);
             packet.copy(self.unhandled_data, 0, offset);
             self.emit('debug', 'DEBUG (packet_extract) Incomplete packet detected, store ' + (packet.length - offset) + ' bytes as unhandled data for later (' + self.unhandled_data.length + '): ' + self.unhandled_data.toString('utf-8'));
